@@ -1,5 +1,6 @@
 const COM_PORT = "COM9";
 
+const HEADER = new Uint8Array([0x52, 0x42]);
 const COMMAND = {
     READ: 0x01,
     WRITE: 0x02,
@@ -16,46 +17,64 @@ const ADDRESS = {
     ACCELERATION_MEMORY_DATA_DATA: 0x503F,
 }
 
-const proc = Bun.spawn(
-    ["plink.exe", "-serial", "-batch", "-sercfg", "115200,8,1,n,N", COM_PORT],
-    {
-        stdin: commandToFrame(COMMAND.READ, ADDRESS.LATEST_DATA_SHORT),
-        stdout: "pipe",
-        stderr: "ignore",
-    });
-
-let readBytesCount = 0;
-let length = 0xFFFF;
-let data;
-for await (const chunk of proc.stdout) {
-    for (const byte of chunk) {
-        switch (readBytesCount) {
-            case 2:
-                length = 0xFF00 + byte;
-                break;
-            case 3:
-                length = (byte << 8) + (length & 0xFF);
-                data = new Uint8Array(length - 2);
-                break;
-            case 2 + 2 + length - 1:
-                proc.kill();
-                break;
-        }
-        if (4 <= readBytesCount && readBytesCount < 4 + length - 2) {
-            data![readBytesCount - 4] = byte;
-        }
-        readBytesCount++;
-    }
-}
+const data = await sendFrame(COM_PORT, commandToFrame(COMMAND.READ, ADDRESS.LATEST_DATA_SHORT));
 console.log(parseLatestDataShort(data!));
 
-function bytesToSInt16LE(bytes: Uint8Array): number {
-    const value = bytes[0]! + (bytes[1]! << 8);
-    return value >= 0x8000 ? value - 0x10000 : value;
-}
-function bytesToSInt32LE(bytes: Uint8Array): number {
-    const value = bytes[0]! + (bytes[1]! << 8) + (bytes[2]! << 16) + (bytes[3]! << 24);
-    return value >= 0x80000000 ? value - 0x100000000 : value;
+async function sendFrame(port: string, frame: Uint8Array): Promise<Uint8Array> {
+    const proc = Bun.spawn(
+        ["plink.exe", "-serial", "-batch", "-sercfg", "115200,8,1,n,N", COM_PORT],
+        {
+            stdin: frame,
+            stdout: "pipe",
+            stderr: "pipe",
+        });
+
+    const timeout = setTimeout(() => {
+        throw new Error("Timeout");
+    }, 1000);
+
+    let readingByte = 0;
+    let length = 0xFFFF;
+    let payload;
+    const crc = new Uint8Array(2);
+
+    for await (const chunk of proc.stdout) {
+        for (const byte of chunk) {
+            if (readingByte === 0) {
+                timeout.close();
+                if (byte !== HEADER[0]) {
+                    proc.kill();
+                    throw new Error("Invalid Header");
+                }
+            } else if (readingByte === 1) {
+                if (byte !== HEADER[1]) {
+                    proc.kill();
+                    throw new Error("Invalid Header");
+                }
+            } else if (readingByte === 2) {
+                length = 0xFF00 + byte;
+            } else if (readingByte === 3) {
+                length = (byte << 8) + (length & 0xFF);
+                payload = new Uint8Array(length - 2);
+            } else if (4 <= readingByte && readingByte < 4 + length - 2) {
+                payload![readingByte - 4] = byte;
+            } else if (readingByte === 4 + length - 2) {
+                crc[0] = byte;
+            } else if (readingByte === 4 + length - 1) {
+                proc.kill();
+                crc[1] = byte;
+                const calcCrc = crc16(new Uint8Array([...HEADER, ...UInt16LEToBytes(length), ...payload!]));
+                if (crc[0] !== calcCrc[0] || crc[1] !== calcCrc[1]) {
+                    throw new Error("Invalid CRC");
+                }
+            }
+            readingByte++;
+        }
+    }
+    if (payload) {
+        return payload;
+    }
+    throw new Error();
 }
 
 function parseLatestDataShort(payload: Uint8Array) {
@@ -65,7 +84,7 @@ function parseLatestDataShort(payload: Uint8Array) {
     if (payload[1] != 0x22 || payload[2] != 0x50) {
         throw new Error("Invalid Address");
     }
-    data = payload.subarray(3);
+    const data = payload.subarray(3);
     return {
         sequenceNumber: data[0]!,
         temperature: bytesToSInt16LE(data.subarray(1, 3)) * 0.01,
@@ -80,20 +99,17 @@ function parseLatestDataShort(payload: Uint8Array) {
     }
 }
 
-function dataToPayload(command: number, address: number, data: Uint8Array = new Uint8Array(0)): Uint8Array {
+function commandToPayload(command: number, address: number, data: Uint8Array = new Uint8Array(0)): Uint8Array {
     return new Uint8Array([
         command,
-        address & 0xFF,
-        (address >> 8) & 0xFF,
+        ...UInt16LEToBytes(address),
         ...data,
     ])
 }
 function payloadToFrame(payload: Uint8Array): Uint8Array {
     const frame = new Uint8Array(4 + payload.length + 2);
-    frame[0] = 0x52;
-    frame[1] = 0x42;
-    frame[2] = (payload.length + 2) & 0xFF;
-    frame[3] = (payload.length + 2 >> 8) & 0xFF;
+    frame.set(HEADER, 0);
+    frame.set(UInt16LEToBytes(payload.length + 2), 2);
     frame.set(payload, 4);
     frame.set(
         crc16(frame.subarray(0, 4 + payload.length)),
@@ -101,7 +117,19 @@ function payloadToFrame(payload: Uint8Array): Uint8Array {
     return frame;
 }
 function commandToFrame(command: number, address: number, data: Uint8Array = new Uint8Array(0)): Uint8Array {
-    return payloadToFrame(dataToPayload(command, address, data));
+    return payloadToFrame(commandToPayload(command, address, data));
+}
+
+function UInt16LEToBytes(value: number): Uint8Array {
+    return new Uint8Array([value & 0xFF, (value >> 8) & 0xFF]);
+}
+function bytesToSInt16LE(bytes: Uint8Array): number {
+    const value = bytes[0]! + (bytes[1]! << 8);
+    return value >= 0x8000 ? value - 0x10000 : value;
+}
+function bytesToSInt32LE(bytes: Uint8Array): number {
+    const value = bytes[0]! + (bytes[1]! << 8) + (bytes[2]! << 16) + (bytes[3]! << 24);
+    return value >= 0x80000000 ? value - 0x100000000 : value;
 }
 
 function crc16(data: Uint8Array): Uint8Array {
