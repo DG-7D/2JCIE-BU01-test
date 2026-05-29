@@ -1,11 +1,25 @@
 const COM_PORT = "COM9";
 
-const FRAME_LATEST_DATA_SHORT = makeFrame(new Uint8Array([0x01, 0x22, 0x50]));
+const COMMAND = {
+    READ: 0x01,
+    WRITE: 0x02,
+    READ_ERROR: 0x81,
+    WRITE_ERROR: 0x82,
+    UNKNOWN: 0xFF,
+}
+const ADDRESS = {
+    MEMORY_DATA_LONG: 0x500E,
+    MEMORY_DATA_SHORT: 0x500F,
+    LATEST_DATA_LONG: 0x5021,
+    LATEST_DATA_SHORT: 0x5022,
+    ACCELERATION_MEMORY_DATA_HEADER: 0x503E,
+    ACCELERATION_MEMORY_DATA_DATA: 0x503F,
+}
 
 const proc = Bun.spawn(
     ["plink.exe", "-serial", "-batch", "-sercfg", "115200,8,1,n,N", COM_PORT],
     {
-        stdin: FRAME_LATEST_DATA_SHORT,
+        stdin: commandToFrame(COMMAND.READ, ADDRESS.LATEST_DATA_SHORT),
         stdout: "pipe",
         stderr: "ignore",
     });
@@ -66,7 +80,15 @@ function parseLatestDataShort(payload: Uint8Array) {
     }
 }
 
-function makeFrame(payload: Uint8Array): Uint8Array {
+function dataToPayload(command: number, address: number, data: Uint8Array = new Uint8Array(0)): Uint8Array {
+    return new Uint8Array([
+        command,
+        address & 0xFF,
+        (address >> 8) & 0xFF,
+        ...data,
+    ])
+}
+function payloadToFrame(payload: Uint8Array): Uint8Array {
     const frame = new Uint8Array(4 + payload.length + 2);
     frame[0] = 0x52;
     frame[1] = 0x42;
@@ -77,6 +99,9 @@ function makeFrame(payload: Uint8Array): Uint8Array {
         crc16(frame.subarray(0, 4 + payload.length)),
         4 + payload.length);
     return frame;
+}
+function commandToFrame(command: number, address: number, data: Uint8Array = new Uint8Array(0)): Uint8Array {
+    return payloadToFrame(dataToPayload(command, address, data));
 }
 
 function crc16(data: Uint8Array): Uint8Array {
