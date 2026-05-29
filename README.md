@@ -1,6 +1,6 @@
 # 2JCIE-BU01 Test
 
-[2JCIE-BU01](https://components.omron.com/jp-ja/products/sensors/2JCIE-BU)からデータを取ってみるテスト。コマンドは色々あるがとりあえず「Latest data short」を取ってみる。
+[2JCIE-BU01](https://components.omron.com/jp-ja/products/sensors/2JCIE-BU)からデータを取ってみるテスト。
 
 BunとPuTTY(の`plink.exe`)が必要です。
 

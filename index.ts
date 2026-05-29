@@ -66,15 +66,26 @@ const ADDRESS = {
     ERROR_STATUS: 0x5401,
     INSTALLATION_DIRECTION: 0x5402,
 }
+const ERROR = {
+    CRC_ERROR: 0x01,
+    COMMAND_ERROR: 0x02,
+    ADDRESS_ERROR: 0x03,
+    LENGTH_ERROR: 0x04,
+    DATA_ERROR: 0x05,
+    BUSY: 0x06,
+}
 
-await sendFrame(COM_PORT, commandToFrame(COMMAND.WRITE, ADDRESS.LED_SETTING_NORMAL_STATE, new Uint8Array([0x00, 0x00, 0x00, 0x00, 0x00])));
+let response;
 
-const data = await sendFrame(COM_PORT, commandToFrame(COMMAND.READ, ADDRESS.LATEST_DATA_SHORT));
-console.log(parseLatestDataShort(data!));
+response = await sendFrame(COM_PORT, commandToFrame(COMMAND.WRITE, ADDRESS.LED_SETTING_NORMAL_STATE, new Uint8Array([0x00, 0x00, 0x00, 0x00, 0x00])));
+console.log(parsePayload(response));
+
+response = await sendFrame(COM_PORT, commandToFrame(COMMAND.READ, ADDRESS.LATEST_DATA_SHORT));
+console.log(parsePayload(response));
 
 async function sendFrame(port: string, frame: Uint8Array): Promise<Uint8Array> {
     const proc = Bun.spawn(
-        ["plink.exe", "-serial", "-batch", "-sercfg", "115200,8,1,n,N", COM_PORT],
+        ["plink.exe", "-serial", "-batch", "-sercfg", "115200,8,1,n,N", port],
         {
             stdin: frame,
             stdout: "pipe",
@@ -82,6 +93,7 @@ async function sendFrame(port: string, frame: Uint8Array): Promise<Uint8Array> {
         });
 
     const timeout = setTimeout(() => {
+        proc.kill();
         throw new Error("Timeout");
     }, 1000);
 
@@ -93,7 +105,7 @@ async function sendFrame(port: string, frame: Uint8Array): Promise<Uint8Array> {
     for await (const chunk of proc.stdout) {
         for (const byte of chunk) {
             if (readingByte === 0) {
-                timeout.close();
+                clearTimeout(timeout);
                 if (byte !== HEADER[0]) {
                     proc.kill();
                     throw new Error("Invalid Header");
@@ -129,14 +141,44 @@ async function sendFrame(port: string, frame: Uint8Array): Promise<Uint8Array> {
     throw new Error();
 }
 
-function parseLatestDataShort(payload: Uint8Array) {
-    if (payload[0] != 0x01) {
-        throw new Error("Invalid Command");
-    }
-    if (payload[1] != 0x22 || payload[2] != 0x50) {
-        throw new Error("Invalid Address");
-    }
+function parsePayload(payload: Uint8Array) {
+    const command = payload[0]!;
+    const address = bytesToUInt16LE(payload.subarray(1, 3));
     const data = payload.subarray(3);
+    if (command & 0x80) {
+        return parseError(data);
+    } else if (command === COMMAND.READ) {
+        switch (address) {
+            case ADDRESS.LATEST_DATA_SHORT:
+                return parseLatestDataShort(data);
+        }
+    }
+    return {
+        command,
+        address,
+        data,
+    };
+}
+
+function parseError(data: Uint8Array) {
+    switch (data[0]) {
+        case ERROR.CRC_ERROR:
+            return {error: "CRC Error"};
+        case ERROR.COMMAND_ERROR:
+            return {error: "Command Error"};
+        case ERROR.ADDRESS_ERROR:
+            return {error: "Address Error"};
+        case ERROR.LENGTH_ERROR:
+            return {error: "Length Error"};
+        case ERROR.DATA_ERROR:
+            return {error: "Data Error"};
+        case ERROR.BUSY:
+            return {error: "Busy"};
+        default:
+            return {error: "Unknown Error"};
+    }
+}
+function parseLatestDataShort(data: Uint8Array) {
     return {
         sequenceNumber: data[0]!,
         temperature: bytesToSInt16LE(data.subarray(1, 3)) * 0.01,
@@ -174,6 +216,9 @@ function commandToFrame(command: number, address: number, data: Uint8Array = new
 
 function UInt16LEToBytes(value: number): Uint8Array {
     return new Uint8Array([value & 0xFF, (value >> 8) & 0xFF]);
+}
+function bytesToUInt16LE(bytes: Uint8Array): number {
+    return bytes[0]! + (bytes[1]! << 8);
 }
 function bytesToSInt16LE(bytes: Uint8Array): number {
     const value = bytes[0]! + (bytes[1]! << 8);
