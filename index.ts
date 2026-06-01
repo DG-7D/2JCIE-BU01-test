@@ -75,6 +75,8 @@ const ERROR = {
     BUSY: 0x06,
 }
 
+const LE = true;
+
 let response;
 
 response = await sendFrame(COM_PORT, commandToFrame(COMMAND.WRITE, ADDRESS.LED_SETTING_NORMAL_STATE, new Uint8Array([0x00, 0x00, 0x00, 0x00, 0x00])));
@@ -142,8 +144,9 @@ async function sendFrame(port: string, frame: Uint8Array): Promise<Uint8Array> {
 }
 
 function parsePayload(payload: Uint8Array) {
-    const command = payload[0]!;
-    const address = bytesToUInt16LE(payload.subarray(1, 3));
+    const dataView = new DataView(payload.buffer);
+    const command = dataView.getUint8(0);
+    const address = dataView.getUint16(1, LE);
     const data = payload.subarray(3);
     if (command & 0x80) {
         return parseError(data);
@@ -179,17 +182,18 @@ function parseError(data: Uint8Array) {
     }
 }
 function parseLatestDataShort(data: Uint8Array) {
+    const dataView = new DataView(data.buffer)
     return {
-        sequenceNumber: data[0]!,
-        temperature: bytesToSInt16LE(data.subarray(1, 3)) * 0.01,
-        relativeHumidity: bytesToSInt16LE(data.subarray(3, 5)) * 0.01,
-        ambientLight: bytesToSInt16LE(data.subarray(5, 7)) * 1,
-        barometricPressure: bytesToSInt32LE(data.subarray(7, 11)) * 0.001,
-        soundNoise: bytesToSInt16LE(data.subarray(11, 13)) * 0.01,
-        eTVOC: bytesToSInt16LE(data.subarray(13, 15)) * 1,
-        eCO2: bytesToSInt16LE(data.subarray(15, 17)) * 1,
-        discomfortIndex: bytesToSInt16LE(data.subarray(17, 19)) * 0.01,
-        heatStroke: bytesToSInt16LE(data.subarray(19, 21)) * 0.01,
+        sequenceNumber: dataView.getUint8(0),
+        temperature: dataView.getInt16(1, LE) * 0.01,
+        relativeHumidity: dataView.getInt16(3, LE) * 0.01,
+        ambientLight: dataView.getInt16(5, LE) * 1,
+        barometricPressure: dataView.getInt32(7, LE) * 0.001,
+        soundNoise: dataView.getInt16(11, LE) * 0.01,
+        eTVOC: dataView.getInt16(13, LE) * 1,
+        eCO2: dataView.getInt16(15, LE) * 1,
+        discomfortIndex: dataView.getInt16(17, LE) * 0.01,
+        heatStroke: dataView.getInt16(19, LE) * 0.01,
     }
 }
 
@@ -215,18 +219,9 @@ function commandToFrame(command: number, address: number, data: Uint8Array = new
 }
 
 function UInt16LEToBytes(value: number): Uint8Array {
-    return new Uint8Array([value & 0xFF, (value >> 8) & 0xFF]);
-}
-function bytesToUInt16LE(bytes: Uint8Array): number {
-    return bytes[0]! + (bytes[1]! << 8);
-}
-function bytesToSInt16LE(bytes: Uint8Array): number {
-    const value = bytes[0]! + (bytes[1]! << 8);
-    return value >= 0x8000 ? value - 0x10000 : value;
-}
-function bytesToSInt32LE(bytes: Uint8Array): number {
-    const value = bytes[0]! + (bytes[1]! << 8) + (bytes[2]! << 16) + (bytes[3]! << 24);
-    return value >= 0x80000000 ? value - 0x100000000 : value;
+    const bytes = new Uint8Array(2);
+    new DataView(bytes.buffer).setUint16(0, value, LE);
+    return bytes;
 }
 
 function crc16(data: Uint8Array): Uint8Array {
