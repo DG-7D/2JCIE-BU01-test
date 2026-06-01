@@ -166,19 +166,19 @@ function parsePayload(payload: Uint8Array) {
 function parseError(data: Uint8Array) {
     switch (data[0]) {
         case ERROR.CRC_ERROR:
-            return {error: "CRC Error"};
+            return { error: "CRC Error" };
         case ERROR.COMMAND_ERROR:
-            return {error: "Command Error"};
+            return { error: "Command Error" };
         case ERROR.ADDRESS_ERROR:
-            return {error: "Address Error"};
+            return { error: "Address Error" };
         case ERROR.LENGTH_ERROR:
-            return {error: "Length Error"};
+            return { error: "Length Error" };
         case ERROR.DATA_ERROR:
-            return {error: "Data Error"};
+            return { error: "Data Error" };
         case ERROR.BUSY:
-            return {error: "Busy"};
+            return { error: "Busy" };
         default:
-            return {error: "Unknown Error"};
+            return { error: "Unknown Error" };
     }
 }
 function parseLatestDataShort(data: Uint8Array) {
