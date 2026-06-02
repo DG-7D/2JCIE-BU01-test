@@ -147,7 +147,7 @@ function parsePayload(payload: Uint8Array) {
     const dataView = new DataView(payload.buffer);
     const command = dataView.getUint8(0);
     const address = dataView.getUint16(1, LE);
-    const data = payload.subarray(3);
+    const data = new DataView(payload.buffer, 3);
     if (command & 0x80) {
         return parseError(data);
     } else if (command === COMMAND.READ) {
@@ -163,8 +163,8 @@ function parsePayload(payload: Uint8Array) {
     };
 }
 
-function parseError(data: Uint8Array) {
-    switch (data[0]) {
+function parseError(data: DataView) {
+    switch (data.getUint8(0)) {
         case ERROR.CRC_ERROR:
             return { error: "CRC Error" };
         case ERROR.COMMAND_ERROR:
@@ -181,19 +181,18 @@ function parseError(data: Uint8Array) {
             return { error: "Unknown Error" };
     }
 }
-function parseLatestDataShort(data: Uint8Array) {
-    const dataView = new DataView(data.buffer, 3);
+function parseLatestDataShort(data: DataView) {
     return {
-        sequenceNumber: dataView.getUint8(0),
-        temperature: dataView.getInt16(1, LE) * 0.01,
-        relativeHumidity: dataView.getInt16(3, LE) * 0.01,
-        ambientLight: dataView.getInt16(5, LE) * 1,
-        barometricPressure: dataView.getInt32(7, LE) * 0.001,
-        soundNoise: dataView.getInt16(11, LE) * 0.01,
-        eTVOC: dataView.getInt16(13, LE) * 1,
-        eCO2: dataView.getInt16(15, LE) * 1,
-        discomfortIndex: dataView.getInt16(17, LE) * 0.01,
-        heatStroke: dataView.getInt16(19, LE) * 0.01,
+        sequenceNumber: data.getUint8(0),
+        temperature: data.getInt16(1, LE) * 0.01,
+        relativeHumidity: data.getInt16(3, LE) * 0.01,
+        ambientLight: data.getInt16(5, LE) * 1,
+        barometricPressure: data.getInt32(7, LE) * 0.001,
+        soundNoise: data.getInt16(11, LE) * 0.01,
+        eTVOC: data.getInt16(13, LE) * 1,
+        eCO2: data.getInt16(15, LE) * 1,
+        discomfortIndex: data.getInt16(17, LE) * 0.01,
+        heatStroke: data.getInt16(19, LE) * 0.01,
     }
 }
 
