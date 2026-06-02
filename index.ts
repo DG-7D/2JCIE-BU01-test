@@ -182,7 +182,7 @@ function parseError(data: Uint8Array) {
     }
 }
 function parseLatestDataShort(data: Uint8Array) {
-    const dataView = new DataView(data.buffer)
+    const dataView = new DataView(data.buffer, 3);
     return {
         sequenceNumber: dataView.getUint8(0),
         temperature: dataView.getInt16(1, LE) * 0.01,
