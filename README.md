@@ -4,8 +4,10 @@
 
 BunとPuTTY(の`plink.exe`)が必要です。
 
-1行目の`COM_PORT`を適切なポートに変更してください。
+```powershell
+winget install Oven-sh.Bun PuTTY.PuTTY
+```
 
-```bash
+```powershell
 bun run index.ts
 ```
