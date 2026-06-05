@@ -75,8 +75,6 @@ const ERROR = {
 
 const LE = true;
 
-type RawPayload = Uint8Array;
-
 // Header(2) + Length(2) + Payload + CRC(2)
 class Frame {
     get header() {
@@ -87,7 +85,7 @@ class Frame {
     }
     readonly payload: Uint8Array;
     get crc() {
-        return crc16(this.makeBytes(HEADER, this.length, this.payload, new Uint8Array(0)));
+        return this.crc16(this.makeBytes(HEADER, this.length, this.payload, new Uint8Array(0)));
     }
 
     get bytes() {
@@ -102,7 +100,7 @@ class Frame {
         if (length && length !== validLength) {
             throw new Error("Invalid Length");
         }
-        const validCrc = crc16(this.makeBytes(HEADER, validLength, payload, new Uint8Array(0)));
+        const validCrc = this.crc16(this.makeBytes(HEADER, validLength, payload, new Uint8Array(0)));
         if (crc && (crc[0] !== validCrc[0] || crc[1] !== validCrc[1])) {
             throw new Error("Invalid CRC");
         }
@@ -112,10 +110,58 @@ class Frame {
     private makeBytes(header: Uint8Array, length: number, payload: Uint8Array, crc: Uint8Array): Uint8Array {
         return new Uint8Array([
             ...header,
-            ...UInt16LEToBytes(length),
+            length & 0xFF, (length >> 8) & 0xFF,
             ...payload,
             ...crc,
         ])
+    }
+    private crc16(data: Uint8Array): Uint8Array {
+        let crc = 0xFFFF;
+        for (let i = 0; i < data.length; i++) {
+            crc ^= data[i]!;
+            for (let j = 0; j < 8; j++) {
+                if ((crc & 1) !== 0) {
+                    crc = (crc >> 1) ^ 0xA001;
+                } else {
+                    crc >>= 1;
+                }
+            }
+        }
+        return new Uint8Array([crc & 0xFF, (crc >> 8) & 0xFF]);
+    }
+}
+
+type RawPayload = Uint8Array;
+class LatestDataShort {
+    readonly sequenceNumber: number;
+    readonly temperature: number;
+    readonly relativeHumidity: number;
+    readonly ambientLight: number;
+    readonly barometricPressure: number;
+    readonly soundNoise: number;
+    readonly eTVOC: number;
+    readonly eCO2: number;
+    readonly discomfortIndex: number;
+    readonly heatStroke: number;
+
+    constructor(rawPayload: RawPayload) {
+        if (rawPayload.length !== 1 + 2 + 21) {
+            throw new Error("Invalid Payload Length");
+        }
+        if (rawPayload[1]! + (rawPayload[2]! << 8) !== ADDRESS.LATEST_DATA_SHORT) {
+            throw new Error("Invalid Address");
+        }
+        const dataView = new DataView(rawPayload.buffer, 1 + 2);
+        this.sequenceNumber = dataView.getUint8(0);
+        this.temperature = dataView.getInt16(1, LE) * 0.01;
+        this.relativeHumidity = dataView.getInt16(3, LE) * 0.01;
+        this.ambientLight = dataView.getInt16(5, LE) * 1;
+        this.barometricPressure = dataView.getInt32(7, LE) * 0.001;
+        this.soundNoise = dataView.getInt16(11, LE) * 0.01;
+        this.eTVOC = dataView.getInt16(13, LE) * 1;
+        this.eCO2 = dataView.getInt16(15, LE) * 1;
+        this.discomfortIndex = dataView.getInt16(17, LE) * 0.01;
+        this.heatStroke = dataView.getInt16(19, LE) * 0.01;
     }
 }
 
@@ -197,17 +243,17 @@ async function sendFrame(port: string, frame: Frame): Promise<Frame> {
 }
 
 function parsePayload(payload: Uint8Array) {
+    try {
+        return new LatestDataShort(payload);
+    } catch (e) {
+        // 続行
+    }
     const dataView = new DataView(payload.buffer);
     const command = dataView.getUint8(0);
     const address = dataView.getUint16(1, LE);
     const data = new DataView(payload.buffer, 3);
     if (command & 0x80) {
         return parseError(data);
-    } else if (command === COMMAND.READ) {
-        switch (address) {
-            case ADDRESS.LATEST_DATA_SHORT:
-                return parseLatestDataShort(data);
-        }
     }
     return {
         command,
@@ -234,48 +280,13 @@ function parseError(data: DataView) {
             return { error: "Unknown Error" };
     }
 }
-function parseLatestDataShort(data: DataView) {
-    return {
-        sequenceNumber: data.getUint8(0),
-        temperature: data.getInt16(1, LE) * 0.01,
-        relativeHumidity: data.getInt16(3, LE) * 0.01,
-        ambientLight: data.getInt16(5, LE) * 1,
-        barometricPressure: data.getInt32(7, LE) * 0.001,
-        soundNoise: data.getInt16(11, LE) * 0.01,
-        eTVOC: data.getInt16(13, LE) * 1,
-        eCO2: data.getInt16(15, LE) * 1,
-        discomfortIndex: data.getInt16(17, LE) * 0.01,
-        heatStroke: data.getInt16(19, LE) * 0.01,
-    }
-}
 
 function commandToPayload(command: number, address: number, data: Uint8Array = new Uint8Array(0)): Uint8Array {
     return new Uint8Array([
         command,
-        ...UInt16LEToBytes(address),
+        address & 0xFF, (address >> 8) & 0xFF,
         ...data,
     ])
-}
-
-function UInt16LEToBytes(value: number): Uint8Array {
-    const bytes = new Uint8Array(2);
-    new DataView(bytes.buffer).setUint16(0, value, LE);
-    return bytes;
-}
-
-function crc16(data: Uint8Array): Uint8Array {
-    let crc = 0xFFFF;
-    for (let i = 0; i < data.length; i++) {
-        crc ^= data[i]!;
-        for (let j = 0; j < 8; j++) {
-            if ((crc & 1) !== 0) {
-                crc = (crc >> 1) ^ 0xA001;
-            } else {
-                crc >>= 1;
-            }
-        }
-    }
-    return new Uint8Array([crc & 0xFF, (crc >> 8) & 0xFF]);
 }
 
 function checkPlink() {
