@@ -75,6 +75,50 @@ const ERROR = {
 
 const LE = true;
 
+type RawPayload = Uint8Array;
+
+// Header(2) + Length(2) + Payload + CRC(2)
+class Frame {
+    get header() {
+        return HEADER;
+    }
+    get length() {
+        return this.payload.length + 2;
+    }
+    readonly payload: Uint8Array;
+    get crc() {
+        return crc16(this.makeBytes(HEADER, this.length, this.payload, new Uint8Array(0)));
+    }
+
+    get bytes() {
+        return this.makeBytes(HEADER, this.length, this.payload, this.crc);
+    }
+
+    constructor(payload: RawPayload, header?: Uint8Array, length?: number, crc?: Uint8Array) {
+        if (header && (header[0] !== HEADER[0] || header[1] !== HEADER[1])) {
+            throw new Error("Invalid Header");
+        }
+        const validLength = payload.length + 2;
+        if (length && length !== validLength) {
+            throw new Error("Invalid Length");
+        }
+        const validCrc = crc16(this.makeBytes(HEADER, validLength, payload, new Uint8Array(0)));
+        if (crc && (crc[0] !== validCrc[0] || crc[1] !== validCrc[1])) {
+            throw new Error("Invalid CRC");
+        }
+        this.payload = payload;
+    }
+
+    private makeBytes(header: Uint8Array, length: number, payload: Uint8Array, crc: Uint8Array): Uint8Array {
+        return new Uint8Array([
+            ...header,
+            ...UInt16LEToBytes(length),
+            ...payload,
+            ...crc,
+        ])
+    }
+}
+
 checkPlink();
 const comPort = await findPort().then(ports => {
     switch (ports.length) {
@@ -92,17 +136,17 @@ const comPort = await findPort().then(ports => {
 
 let response;
 
-response = await sendFrame(comPort, commandToFrame(COMMAND.WRITE, ADDRESS.LED_SETTING_NORMAL_STATE, new Uint8Array([0x00, 0x00, 0x00, 0x00, 0x00])));
-console.log(parsePayload(response));
+response = await sendFrame(comPort, new Frame(commandToPayload(COMMAND.WRITE, ADDRESS.LED_SETTING_NORMAL_STATE, new Uint8Array([0x00, 0x00, 0x00, 0x00, 0x00]))));
+console.log(parsePayload(response.payload));
 
-response = await sendFrame(comPort, commandToFrame(COMMAND.READ, ADDRESS.LATEST_DATA_SHORT));
-console.log(parsePayload(response));
+response = await sendFrame(comPort, new Frame(commandToPayload(COMMAND.READ, ADDRESS.LATEST_DATA_SHORT)));
+console.log(parsePayload(response.payload));
 
-async function sendFrame(port: string, frame: Uint8Array): Promise<Uint8Array> {
+async function sendFrame(port: string, frame: Frame): Promise<Frame> {
     const proc = Bun.spawn(
         ["plink.exe", "-serial", "-batch", "-sercfg", "115200,8,1,n,N", port],
         {
-            stdin: frame,
+            stdin: frame.bytes,
             stdout: "pipe",
             stderr: "pipe",
         });
@@ -142,18 +186,14 @@ async function sendFrame(port: string, frame: Uint8Array): Promise<Uint8Array> {
             } else if (readingByte === 4 + length - 1) {
                 proc.kill();
                 crc[1] = byte;
-                const calcCrc = crc16(new Uint8Array([...HEADER, ...UInt16LEToBytes(length), ...payload!]));
-                if (crc[0] !== calcCrc[0] || crc[1] !== calcCrc[1]) {
-                    throw new Error("Invalid CRC");
-                }
             }
             readingByte++;
         }
     }
-    if (payload) {
-        return payload;
+    if (!payload) {
+        throw new Error("No Payload");
     }
-    throw new Error();
+    return new Frame(payload, undefined, length, crc);
 }
 
 function parsePayload(payload: Uint8Array) {
@@ -215,19 +255,6 @@ function commandToPayload(command: number, address: number, data: Uint8Array = n
         ...UInt16LEToBytes(address),
         ...data,
     ])
-}
-function payloadToFrame(payload: Uint8Array): Uint8Array {
-    const frame = new Uint8Array(4 + payload.length + 2);
-    frame.set(HEADER, 0);
-    frame.set(UInt16LEToBytes(payload.length + 2), 2);
-    frame.set(payload, 4);
-    frame.set(
-        crc16(frame.subarray(0, 4 + payload.length)),
-        4 + payload.length);
-    return frame;
-}
-function commandToFrame(command: number, address: number, data: Uint8Array = new Uint8Array(0)): Uint8Array {
-    return payloadToFrame(commandToPayload(command, address, data));
 }
 
 function UInt16LEToBytes(value: number): Uint8Array {
