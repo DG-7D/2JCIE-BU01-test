@@ -278,6 +278,19 @@ function commandToPayload(command: number, address: number, data: Uint8Array = n
     ])
 }
 
+function checkPlink() {
+    try {
+        Bun.spawn(["plink.exe", "-V"], { stdin: null, stdout: "ignore", stderr: "ignore" })
+    } catch (e: any) {
+        if (e.code === "ENOENT") {
+            console.error("plink.exe not found");
+            console.error("run `winget install PuTTY.PuTTY` to install PuTTY");
+        } else {
+            console.error(e);
+        }
+        process.exit(1);
+    }
+}
 // Get-PnpDevice遅い
 // function findPorts() {
 //     return Bun.spawn(
@@ -315,6 +328,7 @@ function findPorts() {
 export class Sensor {
     public port: string;
     constructor(port: string) {
+        checkPlink();
         this.port = port;
     }
 
