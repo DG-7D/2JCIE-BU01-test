@@ -76,7 +76,7 @@ enum ERROR {
 const LE = true;
 
 // Header(2) + Length(2) + Payload + CRC(2)
-export class Frame {
+class Frame {
     get header() {
         return HEADER;
     }
@@ -216,7 +216,7 @@ class GenericPayload {
     }
 }
 
-export async function sendFrame(port: string, frame: Frame): Promise<Frame> {
+async function sendFrame(port: string, frame: Frame): Promise<Frame> {
     const proc = Bun.spawn(
         ["plink.exe", "-serial", "-batch", "-sercfg", "115200,8,1,n,N", port],
         {
@@ -270,20 +270,76 @@ export async function sendFrame(port: string, frame: Frame): Promise<Frame> {
     return new Frame(payload, undefined, length, crc);
 }
 
-export function parsePayload(payload: Uint8Array) {
-    try {
-        return new LatestDataShort(payload);
-    } catch (e) { }
-    try {
-        return new ErrorResponse(payload);
-    } catch (e) { }
-    return new GenericPayload(payload);
-}
-
-export function commandToPayload(command: number, address: number, data: Uint8Array = new Uint8Array(0)): Uint8Array {
+function commandToPayload(command: number, address: number, data: Uint8Array = new Uint8Array(0)): Uint8Array {
     return new Uint8Array([
         command,
         address & 0xFF, (address >> 8) & 0xFF,
         ...data,
     ])
+}
+
+// Get-PnpDevice遅い
+// function findPorts() {
+//     return Bun.spawn(
+//         ["powershell.exe", "-Command", "Get-PnpDevice -Class Ports -PresentOnly | ConvertTo-Json"],
+//         { stdin: null, stdout: "pipe", stderr: "ignore" }
+//     ).stdout.json().catch(() => [])
+//         .then(json => {
+//             if (!Array.isArray(json)) {
+//                 json = [json];
+//             }
+//             return json.filter(
+//                 (device: any) => device.HardwareID.some((id: string) => id === "FTDIBUS\\COMPORT&VID_0590&PID_00D4")
+//             ).map(
+//                 (device: any) => device.Name.match(/COM\d+/)?.[0]
+//             );
+//         });
+// }
+function findPorts() {
+    return Bun.spawn(
+        ["powershell.exe", "-Command", "pnputil.exe /enum-devices /connected /class Ports /deviceids /format csv | ConvertFrom-Csv | ConvertTo-Json"],
+        { stdin: null, stdout: "pipe", stderr: "ignore" }
+    ).stdout.json().catch(() => [])
+        .then(json => {
+            if (!Array.isArray(json)) {
+                json = [json];
+            }
+            return json.filter(
+                (device: any) => device.HardwareIds?.split(";").some((id: string) => id === "FTDIBUS\\COMPORT&VID_0590&PID_00D4")
+            ).map(
+                (device: any) => device.DeviceDescription.match(/COM\d+/)?.[0]
+            ) as string[];
+        })
+}
+
+export class Sensor {
+    public port: string;
+    constructor(port: string) {
+        this.port = port;
+    }
+
+    public async getLatestDataShort() {
+        const response = await this.sendCommand(COMMAND.READ, ADDRESS.LATEST_DATA_SHORT);
+        try {
+            return new LatestDataShort(response.payload);
+        } catch (e) {
+            throw new Error(new ErrorResponse(response.payload).description);
+        }
+    }
+
+    public async sendCommand(command: number, address: number, data: Uint8Array = new Uint8Array(0)) {
+        return sendFrame(this.port, new Frame(commandToPayload(command, address, data)));
+    }
+
+    public static async getPort() {
+        const ports = await findPorts();
+        if (ports[0]) {
+            if (ports.length > 1) {
+                console.log(`Multiple 2JCIE-BU01 found. Use the first one: ${ports[0]}`);
+            }
+            return ports[0];
+        } else {
+            throw new Error("No 2JCIE-BU01 found");
+        }
+    }
 }
