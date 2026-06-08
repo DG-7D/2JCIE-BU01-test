@@ -203,6 +203,18 @@ class ErrorResponse {
         }
     }
 }
+class GenericPayload {
+    readonly command: number;
+    readonly address: number;
+    readonly data: DataView;
+
+    constructor(rawPayload: RawPayload) {
+        const dataView = new DataView(rawPayload.buffer);
+        this.command = dataView.getUint8(0);
+        this.address = dataView.getUint16(1, LE);
+        this.data = new DataView(rawPayload.buffer, 3);
+    }
+}
 
 export async function sendFrame(port: string, frame: Frame): Promise<Frame> {
     const proc = Bun.spawn(
@@ -261,23 +273,11 @@ export async function sendFrame(port: string, frame: Frame): Promise<Frame> {
 export function parsePayload(payload: Uint8Array) {
     try {
         return new LatestDataShort(payload);
-    } catch (e) {
-        // 続行
-    }
+    } catch (e) { }
     try {
         return new ErrorResponse(payload);
-    } catch (e) {
-        // 続行
-    }
-    const dataView = new DataView(payload.buffer);
-    const command = dataView.getUint8(0);
-    const address = dataView.getUint16(1, LE);
-    const data = new DataView(payload.buffer, 3);
-    return {
-        command,
-        address,
-        data,
-    };
+    } catch (e) { }
+    return new GenericPayload(payload);
 }
 
 export function commandToPayload(command: number, address: number, data: Uint8Array = new Uint8Array(0)): Uint8Array {
