@@ -64,13 +64,13 @@ export const ADDRESS = {
     ERROR_STATUS: 0x5401,
     INSTALLATION_DIRECTION: 0x5402,
 }
-const ERROR = {
-    CRC_ERROR: 0x01,
-    COMMAND_ERROR: 0x02,
-    ADDRESS_ERROR: 0x03,
-    LENGTH_ERROR: 0x04,
-    DATA_ERROR: 0x05,
-    BUSY: 0x06,
+enum ERROR {
+    CRC_ERROR = 0x01,
+    COMMAND_ERROR = 0x02,
+    ADDRESS_ERROR = 0x03,
+    LENGTH_ERROR = 0x04,
+    DATA_ERROR = 0x05,
+    BUSY = 0x06,
 }
 
 const LE = true;
@@ -131,6 +131,7 @@ export class Frame {
     }
 }
 
+// Command(1) + Address(2) + Data
 type RawPayload = Uint8Array;
 class LatestDataShort {
     readonly sequenceNumber: number;
@@ -162,6 +163,44 @@ class LatestDataShort {
         this.eCO2 = dataView.getInt16(15, LE) * 1;
         this.discomfortIndex = dataView.getInt16(17, LE) * 0.01;
         this.heatStroke = dataView.getInt16(19, LE) * 0.01;
+    }
+}
+class ErrorResponse {
+    readonly command: number;
+    readonly address: number;
+    readonly code: ERROR;
+    readonly description: string;
+
+    constructor(rawPayload: RawPayload) {
+        const dataView = new DataView(rawPayload.buffer);
+        if (!(dataView.getUint8(0) & 0x80)) {
+            throw new Error("Not an Error");
+        }
+        this.command = dataView.getUint8(0);
+        this.address = dataView.getUint16(1, LE);
+        this.code = dataView.getUint8(3);
+        switch (this.code) {
+            case ERROR.CRC_ERROR:
+                this.description = "CRC Error";
+                break;
+            case ERROR.COMMAND_ERROR:
+                this.description = "Command Error";
+                break;
+            case ERROR.ADDRESS_ERROR:
+                this.description = "Address Error";
+                break;
+            case ERROR.LENGTH_ERROR:
+                this.description = "Length Error";
+                break;
+            case ERROR.DATA_ERROR:
+                this.description = "Data Error";
+                break;
+            case ERROR.BUSY:
+                this.description = "Busy";
+                break;
+            default:
+                this.description = "Unknown Error";
+        }
     }
 }
 
@@ -225,37 +264,20 @@ export function parsePayload(payload: Uint8Array) {
     } catch (e) {
         // 続行
     }
+    try {
+        return new ErrorResponse(payload);
+    } catch (e) {
+        // 続行
+    }
     const dataView = new DataView(payload.buffer);
     const command = dataView.getUint8(0);
     const address = dataView.getUint16(1, LE);
     const data = new DataView(payload.buffer, 3);
-    if (command & 0x80) {
-        return parseError(data);
-    }
     return {
         command,
         address,
         data,
     };
-}
-
-function parseError(data: DataView) {
-    switch (data.getUint8(0)) {
-        case ERROR.CRC_ERROR:
-            return { error: "CRC Error" };
-        case ERROR.COMMAND_ERROR:
-            return { error: "Command Error" };
-        case ERROR.ADDRESS_ERROR:
-            return { error: "Address Error" };
-        case ERROR.LENGTH_ERROR:
-            return { error: "Length Error" };
-        case ERROR.DATA_ERROR:
-            return { error: "Data Error" };
-        case ERROR.BUSY:
-            return { error: "Busy" };
-        default:
-            return { error: "Unknown Error" };
-    }
 }
 
 export function commandToPayload(command: number, address: number, data: Uint8Array = new Uint8Array(0)): Uint8Array {

@@ -17,6 +17,9 @@ const comPort = await findPort().then(ports => {
 
 let response;
 
+response = await sendFrame(comPort, new Frame(commandToPayload(COMMAND.WRITE, 0xffff, new Uint8Array([0x00]))));
+console.log(parsePayload(response.payload));
+
 response = await sendFrame(comPort, new Frame(commandToPayload(COMMAND.WRITE, ADDRESS.LED_SETTING_NORMAL_STATE, new Uint8Array([0x00, 0x00, 0x00, 0x00, 0x00]))));
 console.log(parsePayload(response.payload));
 
