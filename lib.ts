@@ -291,43 +291,10 @@ function checkPlink() {
         process.exit(1);
     }
 }
-// Get-PnpDevice遅い
-// function findPorts() {
-//     return Bun.spawn(
-//         ["powershell.exe", "-Command", "Get-PnpDevice -Class Ports -PresentOnly | ConvertTo-Json"],
-//         { stdin: null, stdout: "pipe", stderr: "ignore" }
-//     ).stdout.json().catch(() => [])
-//         .then(json => {
-//             if (!Array.isArray(json)) {
-//                 json = [json];
-//             }
-//             return json.filter(
-//                 (device: any) => device.HardwareID.some((id: string) => id === "FTDIBUS\\COMPORT&VID_0590&PID_00D4")
-//             ).map(
-//                 (device: any) => device.Name.match(/COM\d+/)?.[0]
-//             );
-//         });
-// }
-function findPorts() {
-    return Bun.spawn(
-        ["powershell.exe", "-Command", "pnputil.exe /enum-devices /connected /class Ports /deviceids /format csv | ConvertFrom-Csv | ConvertTo-Json"],
-        { stdin: null, stdout: "pipe", stderr: "ignore" }
-    ).stdout.json().catch(() => [])
-        .then(json => {
-            if (!Array.isArray(json)) {
-                json = [json];
-            }
-            return json.filter(
-                (device: any) => device.HardwareIds?.split(";").some((id: string) => id === "FTDIBUS\\COMPORT&VID_0590&PID_00D4")
-            ).map(
-                (device: any) => device.DeviceDescription.match(/COM\d+/)?.[0]
-            ) as string[];
-        })
-}
 
 export class Sensor {
     public port: string;
-    constructor(port: string) {
+    constructor(port: string = Sensor.getFirstPort()) {
         checkPlink();
         this.port = port;
     }
@@ -345,8 +312,28 @@ export class Sensor {
         return sendFrame(this.port, new Frame(commandToPayload(command, address, data)));
     }
 
-    public static async getPort() {
-        const ports = await findPorts();
+    public static findPorts() {
+        try {
+            let devices = JSON.parse(
+                Bun.spawnSync(
+                    ["powershell.exe", "-Command", "pnputil.exe /enum-devices /connected /class Ports /deviceids /format csv | ConvertFrom-Csv | ConvertTo-Json"],
+                    { stdin: null, stdout: "pipe", stderr: "ignore" }
+                ).stdout.toString());
+            if (!Array.isArray(devices)) {
+                devices = [devices];
+            }
+            return devices.filter(
+                (device: any) => device.HardwareIds?.split(";").some((id: string) => id === "FTDIBUS\\COMPORT&VID_0590&PID_00D4")
+            ).map(
+                (device: any) => device.DeviceDescription.match(/COM\d+/)?.[0]
+            ) as string[];
+        } catch {
+            return [];
+        }
+    }
+
+    private static getFirstPort() {
+        const ports = Sensor.findPorts();
         if (ports[0]) {
             if (ports.length > 1) {
                 console.log(`Multiple 2JCIE-BU01 found. Use the first one: ${ports[0]}`);
@@ -357,3 +344,21 @@ export class Sensor {
         }
     }
 }
+
+// Get-PnpDevice遅い
+// function findPorts() {
+//     return Bun.spawn(
+//         ["powershell.exe", "-Command", "Get-PnpDevice -Class Ports -PresentOnly | ConvertTo-Json"],
+//         { stdin: null, stdout: "pipe", stderr: "ignore" }
+//     ).stdout.json().catch(() => [])
+//         .then(json => {
+//             if (!Array.isArray(json)) {
+//                 json = [json];
+//             }
+//             return json.filter(
+//                 (device: any) => device.HardwareID.some((id: string) => id === "FTDIBUS\\COMPORT&VID_0590&PID_00D4")
+//             ).map(
+//                 (device: any) => device.Name.match(/COM\d+/)?.[0]
+//             );
+//         });
+// }

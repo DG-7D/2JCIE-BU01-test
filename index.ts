@@ -1,6 +1,6 @@
 import { ADDRESS, COMMAND, Sensor } from "./lib";
 
-const sensor = new Sensor(await Sensor.getPort());
+const sensor = new Sensor();
 
 console.log(await sensor.sendCommand(COMMAND.WRITE, 0xFFFF));
 
